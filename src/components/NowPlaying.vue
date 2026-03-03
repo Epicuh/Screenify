@@ -1,22 +1,33 @@
 <template>
   <div id="app">
-    <div v-if="player.playing" class="now-playing" :class="getNowPlayingClass()">
+    <div
+      v-if="playerData.playing"
+      class="now-playing"
+      :class="getNowPlayingClass()"
+    >
       <div class="now-playing__cover">
         <img
-          :src="player.trackAlbum.image"
-          :alt="player.trackTitle"
+          :key="playerData.trackId"
+          :src="playerData.trackAlbum.image"
+          :alt="playerData.trackTitle"
           class="now-playing__image"
           crossorigin="anonymous"
+          :style="{
+            opacity: coverReady ? 1 : 0,
+            transition: 'opacity 250ms ease'
+          }"
+          @load="onCoverLoaded"
+          @error="onCoverError"
         />
       </div>
       <div class="now-playing__details">
-        <h1 class="now-playing__track" v-text="player.trackTitle"></h1>
+        <h1 class="now-playing__track" v-text="playerData.trackTitle"></h1>
         <h2 class="now-playing__artists" v-text="getTrackArtists"></h2>
       </div>
     </div>
 
     <div v-else class="now-playing" :class="getNowPlayingClass()">
-      <h1 class="now-playing__idle-heading">No music playing</h1>
+      <h1 class="now-playing__idle-heading">No music is playing 😔</h1>
     </div>
   </div>
 </template>
@@ -24,35 +35,6 @@
 <script>
 import * as Vibrant from 'node-vibrant'
 import props from '@/utils/props.js'
-
-function clamp(n, min = 0, max = 255) {
-  return Math.min(max, Math.max(min, n))
-}
-
-function hexToRgb(hex) {
-  const h = hex.replace('#', '').trim()
-  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h
-  const num = parseInt(full, 16)
-  return {
-    r: (num >> 16) & 255,
-    g: (num >> 8) & 255,
-    b: num & 255
-  }
-}
-
-function rgbToHex({ r, g, b }) {
-  const toHex = v => clamp(v).toString(16).padStart(2, '0')
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`
-}
-
-function lighten(hex, amt = 0.12) {
-  const { r, g, b } = hexToRgb(hex)
-  return rgbToHex({
-    r: Math.round(r + (255 - r) * amt),
-    g: Math.round(g + (255 - g) * amt),
-    b: Math.round(b + (255 - b) * amt)
-  })
-}
 
 export default {
   name: 'NowPlaying',
@@ -69,13 +51,15 @@ export default {
       playerResponse: {},
       playerData: this.getEmptyPlayer(),
       colourPalette: '',
-      swatches: []
+      swatches: [],
+      coverReady: true,
+      paletteReqId: 0
     }
   },
 
   computed: {
     getTrackArtists() {
-      return this.player.trackArtists.join(', ')
+      return (this.playerData.trackArtists || []).join(', ')
     }
   },
 
@@ -108,7 +92,11 @@ export default {
         if (response.status === 204) {
           data = this.getEmptyPlayer()
           this.playerData = data
-          this.$emit('spotifyTrackUpdated', data)
+
+          this.$nextTick(() => {
+            this.$emit('spotifyTrackUpdated', data)
+          })
+
           return
         }
 
@@ -116,30 +104,57 @@ export default {
         this.playerResponse = data
       } catch (error) {
         this.handleExpiredToken()
+
         data = this.getEmptyPlayer()
         this.playerData = data
-        this.$emit('spotifyTrackUpdated', data)
+
+        this.$nextTick(() => {
+          this.$emit('spotifyTrackUpdated', data)
+        })
       }
     },
 
     getNowPlayingClass() {
-      const playerClass = this.player.playing ? 'active' : 'idle'
+      const playerClass = this.playerData.playing ? 'active' : 'idle'
       return `now-playing--${playerClass}`
     },
 
-    getAlbumColours() {
-      if (!this.player.trackAlbum?.image) return
+    // run Vibrant only for the CURRENT track's loaded image
+    onCoverLoaded(evt) {
+      const imgEl = evt?.target
+      if (!imgEl) return
 
-      Vibrant.from(this.player.trackAlbum.image)
+      this.coverReady = true
+
+      const trackId = this.playerData.trackId
+      const imgUrl = this.playerData.trackAlbum?.image
+
+      // guard: only extract palette if this load corresponds to current src+track
+      if (!trackId || !imgUrl) return
+      if (imgEl.currentSrc !== imgUrl && imgEl.src !== imgUrl) return
+
+      const reqId = ++this.paletteReqId
+
+      Vibrant.from(imgEl)
         .quality(1)
         .clearFilters()
         .getPalette()
         .then(palette => {
+          // ignore stale results (prevents “one song behind”)
+          if (reqId !== this.paletteReqId) return
+          if (trackId !== this.playerData.trackId) return
+          if (imgUrl !== this.playerData.trackAlbum?.image) return
+
           this.handleAlbumPalette(palette)
         })
         .catch(() => {
-          // If palette extraction fails, keep whatever background you already have.
+          // keep existing background if extraction fails
         })
+    },
+
+    onCoverError() {
+      // If the image fails, show it anyway (avoid invisible cover forever)
+      this.coverReady = true
     },
 
     getEmptyPlayer() {
@@ -160,25 +175,10 @@ export default {
     },
 
     setAppColours() {
-      const baseHex =
-        (this.colourPalette && this.colourPalette.background) || '#402830'
-
-      const safeBase = /^#[0-9a-fA-F]{6}$/.test(baseHex) ? baseHex : '#402830'
-      const top = lighten(safeBase, 0.12)
-
-      // subtle Spotify-ish gradient, with the darker part starting higher up
-      const gradient = `linear-gradient(
-        180deg,
-        ${top} 0%,
-        ${safeBase} 60%,
-        rgba(0, 0, 0, 0.85) 90%,
-        rgba(0, 0, 0, 0.95) 100%
-      )`
-
-      //document.documentElement.style.setProperty('--color-text-primary', textHex)
+      // Keep text untouched (you wanted white). Only update background.
       document.documentElement.style.setProperty(
         '--colour-background-now-playing',
-        gradient
+        this.colourPalette.background
       )
     },
 
@@ -200,23 +200,42 @@ export default {
         return
       }
 
+      const item = this.playerResponse.item
+      const trackId = item.id
+
+      // choose a reasonable cover size (good quality, not huge)
+      const images = item.album?.images || []
+      const best =
+        images.find(i => i.width && i.width <= 300) ||
+        images.find(i => i.width && i.width <= 640) ||
+        images[images.length - 1] ||
+        images[0]
+
+      const rawUrl = best?.url || ''
+      const sep = rawUrl.includes('?') ? '&' : '?'
+      const coverUrl = rawUrl ? `${rawUrl}${sep}t=${trackId}` : ''
+
+      // hide cover until new one is fully loaded (prevents half-render striping)
+      this.coverReady = false
+
       this.playerData = {
         playing: this.playerResponse.is_playing,
-        trackArtists: this.playerResponse.item.artists.map(artist => artist.name),
-        trackTitle: this.playerResponse.item.name,
-        trackId: this.playerResponse.item.id,
+        trackArtists: item.artists.map(artist => artist.name),
+        trackTitle: item.name,
+        trackId,
         trackAlbum: {
-          title: this.playerResponse.item.album.name,
-          image: this.playerResponse.item.album.images[0].url
+          title: item.album.name,
+          image: coverUrl
         }
       }
     },
 
     handleAlbumPalette(palette) {
+      // deterministic pick: no random “why did it change” nonsense
       const preferred =
         palette.Vibrant ||
-        palette.Muted ||
         palette.DarkVibrant ||
+        palette.Muted ||
         palette.DarkMuted ||
         Object.values(palette).find(s => s)
 
@@ -251,9 +270,8 @@ export default {
 
     playerData() {
       this.$emit('spotifyTrackUpdated', this.playerData)
-      this.$nextTick(() => {
-        this.getAlbumColours()
-      })
+      // DO NOT call getAlbumColours here anymore.
+      // Palette runs only after the correct cover finishes loading.
     }
   }
 }
