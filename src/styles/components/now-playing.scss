@@ -9,7 +9,9 @@
 
   &__track,
   &__artists,
-  &__idle-heading {
+  &__idle-heading,
+  &__lyrics-empty,
+  &__lyrics-line {
     color: var(--color-text-primary);
   }
 
@@ -32,8 +34,6 @@
     border-radius: 12px;
     display: block;
     max-width: 400px;
-
-    /* Shift cover 2cm left */
     margin-left: -7cm;
   }
 
@@ -43,25 +43,167 @@
     box-shadow: 1px 1px 16px -2px rgba(0, 0, 0, 0.3);
     height: auto;
     max-width: 60vw;
-    width: 100%;
-
-    /* Proper scale without layout breaking */
     width: 85%;
   }
 
   &__details {
+    position: relative;
     text-align: center;
-
-    /* Shift text 2cm left */
     margin-left: -2cm;
+    min-height: clamp(320px, 58vh, 520px);
+  }
+
+  &__content {
+    transition: opacity 0.3s ease;
+    will-change: opacity;
+  }
+
+  &__meta,
+  &__lyrics {
+    min-height: clamp(300px, 54vh, 500px);
   }
 
   &__track {
+    font-size: clamp(2.7rem, 4.8vw, 6.2rem);
     font-weight: var(--font-weight-heading);
+    margin: 0;
   }
 
   &__artists {
+    font-size: clamp(1.43rem, 2.4vw, 2.95rem);
+    margin: 3px 0 0;
     opacity: 0.8;
+  }
+
+  &__lyrics {
+    position: relative;
+  }
+
+  &__progress {
+    margin-top: 1.2rem;
+    width: 100%;
+  }
+
+  &__progress-track {
+    background: #c7c7c7;
+    border-radius: 999px;
+    contain: layout paint;
+    height: 6px;
+    overflow: visible;
+    position: relative;
+    width: 100%;
+  }
+
+  &__progress-fill {
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: inherit;
+    height: 100%;
+    left: 0;
+    position: absolute;
+    top: 0;
+    transform: translateZ(0) scaleX(0);
+    transform-origin: left center;
+    width: 100%;
+    will-change: transform;
+  }
+
+  &__progress-dot {
+    background: rgba(255, 255, 255, 0.95);
+    backface-visibility: hidden;
+    border-radius: 50%;
+    height: 16px;
+    left: 0;
+    position: absolute;
+    top: 50%;
+    transform: translate3d(0, -50%, 0);
+    will-change: transform;
+    width: 16px;
+  }
+
+  &__progress-times {
+    display: flex;
+    font-size: clamp(1rem, 1.4vw, 1.35rem);
+    justify-content: space-between;
+    margin-top: 8px;
+    opacity: 0.95;
+  }
+
+  &__lyrics-empty {
+    padding-top: 1.2rem;
+    opacity: 0.8;
+  }
+
+  &__lyrics-scroller {
+    contain: layout paint;
+    height: clamp(300px, 54vh, 500px);
+    overflow: hidden;
+    position: relative;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0%,
+      rgba(0, 0, 0, 0.1) 10%,
+      rgba(0, 0, 0, 0.5) 24%,
+      rgba(0, 0, 0, 1) 38%,
+      rgba(0, 0, 0, 1) 62%,
+      rgba(0, 0, 0, 0.5) 76%,
+      rgba(0, 0, 0, 0.1) 90%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0%,
+      rgba(0, 0, 0, 0.1) 10%,
+      rgba(0, 0, 0, 0.5) 24%,
+      rgba(0, 0, 0, 1) 38%,
+      rgba(0, 0, 0, 1) 62%,
+      rgba(0, 0, 0, 0.5) 76%,
+      rgba(0, 0, 0, 0.1) 90%,
+      transparent 100%
+    );
+  }
+
+  &__lyrics-scroller::-webkit-scrollbar {
+    display: none;
+  }
+
+  &__lyrics-rail {
+    backface-visibility: hidden;
+    padding: 110px 0;
+    transform: translate3d(0, 0, 0);
+    transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+  }
+
+  &__lyrics-line {
+    backface-visibility: hidden;
+    font-size: clamp(1.7rem, 3.2vw, 4.6rem);
+    font-weight: var(--font-weight-heading);
+    line-height: 1.25;
+    margin: 0.3rem 0;
+    transform: translate3d(0, 0, 0);
+    transition: opacity 0.22s ease, transform 0.28s ease;
+
+    &.is-current {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    &.is-near {
+      opacity: 0.6;
+      transform: scale(0.985);
+    }
+
+    &.is-mid {
+      opacity: 0.14;
+      transform: scale(0.97);
+    }
+
+    &.is-far {
+      opacity: 0.06;
+      transform: scale(0.955);
+    }
   }
 
   &--active {
@@ -84,11 +226,55 @@
     &__cover,
     &__details {
       width: 50%;
+    }
+
+    &__cover {
       max-width: 495px;
     }
 
     &__details {
+      max-width: 840px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
       text-align: left;
+      padding-left: calc(var(--spacing-m) + 1rem);
+    }
+
+    &__meta,
+    &__lyrics {
+      max-width: none;
+      width: 145%;
+    }
+
+    &__meta {
+      min-height: 420px;
+      padding-top: 1cm;
+      padding-bottom: 5.5cm;
+    }
+
+    &__track,
+    &__artists,
+    &__lyrics-line {
+      max-width: none;
+      width: 100%;
+    }
+
+    &__progress {
+      bottom: 0.75cm;
+      left: 0.25cm;
+      margin-top: 0;
+      max-width: none;
+      position: absolute;
+      width: 145%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &__content,
+    &__lyrics-rail,
+    &__lyrics-line {
+      transition: none;
     }
   }
 }

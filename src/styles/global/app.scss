@@ -4,8 +4,8 @@
  * Entry file.
  *
  */
-@import '@/styles/global/variables';
-@import '@/styles/global/typography';
-@import '@/styles/global/base';
-@import '@/styles/components/now-playing';
-@import '@/styles/components/buttons';
+@use '@/styles/global/variables';
+@use '@/styles/global/typography';
+@use '@/styles/global/base';
+@use '@/styles/components/now-playing';
+@use '@/styles/components/buttons';
