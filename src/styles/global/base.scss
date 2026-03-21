@@ -5,6 +5,7 @@
 html, body {
   -moz-osx-font-smoothing: grayscale;
   -webkit-font-smoothing: antialiased;
+  background-color: var(--colour-background-now-playing-solid);
   font-family: var(--font-body);
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-body);
@@ -17,12 +18,43 @@ html, body {
   line-height: var(--body-line-height);
 }
 
+body {
+  overflow: hidden;
+}
+
 #app {
   -moz-osx-font-smoothing: grayscale;
   -webkit-font-smoothing: antialiased;
+  background-color: var(--colour-background-now-playing-solid);
   color: #2c3e50;
   height: 100vh;
   margin: 0;
+  overflow: hidden;
   padding: 0;
+  position: relative;
   width: 100vw;
+}
+
+.app-shell {
+  height: 100%;
+  position: relative;
+  width: 100%;
+}
+
+.app-view,
+.app-viewport {
+  height: 100%;
+  width: 100%;
+}
+
+@media (orientation: portrait) {
+  .app-viewport {
+    height: 100vw;
+    left: 100vw;
+    position: absolute;
+    top: 0;
+    transform: rotate(90deg);
+    transform-origin: top left;
+    width: 100vh;
+  }
 }

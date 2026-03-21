@@ -1,7 +1,8 @@
 <template>
-  <div id="app">
+  <div class="app-shell">
     <Component
       :is="getCurrentComponent"
+      class="app-viewport"
       :auth="auth"
       :endpoints="endpoints"
       :player="player"

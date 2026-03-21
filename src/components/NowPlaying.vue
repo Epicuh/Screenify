@@ -1,5 +1,5 @@
 <template>
-  <div id="app">
+  <div class="app-view">
     <div
       v-if="playerData.playing"
       class="now-playing"
@@ -90,6 +90,40 @@ const POLL_DELAYS_MS = Object.freeze({
   nearTrackEndWindow: 4000,
   nearTrackEndBuffer: 120
 })
+const TRACK_CHANGE_SETTLE_PROGRESS_MS = 1800
+const BACKGROUND_FALLBACK_HSL = Object.freeze({
+  h: 214,
+  s: 0.2,
+  l: 0.18
+})
+const BASE_SATURATION_RANGE = Object.freeze({
+  min: 0.22,
+  max: 0.68
+})
+const BASE_LIGHTNESS_RANGE = Object.freeze({
+  min: 0.18,
+  max: 0.42
+})
+const PALETTE_REJECTION_THRESHOLDS = Object.freeze({
+  maxLightness: 0.72,
+  minLightness: 0.08,
+  minSaturation: 0.14,
+  maxLuminance: 0.46,
+  accentPopulationRatio: 0.18,
+  accentSaturation: 0.62
+})
+const PALETTE_NAME_WEIGHTS = Object.freeze({
+  DarkMuted: 0.42,
+  Muted: 0.34,
+  DarkVibrant: 0.24,
+  Vibrant: 0.1,
+  LightMuted: -0.1,
+  LightVibrant: -0.24
+})
+const PI_GRADIENT_STOPS = Object.freeze({
+  upper: 24,
+  lower: 68
+})
 
 export default {
   name: 'NowPlaying',
@@ -107,10 +141,11 @@ export default {
       lyricScrollFrame: 0,
       playerResponse: {},
       playerData: this.getEmptyPlayer(),
-      colourPalette: '',
+      colourPalette: null,
       swatches: [],
       coverReady: true,
       paletteReqId: 0,
+      preferredDisplayMode: 'meta',
       lyricsMode: false,
       displayMode: 'meta',
       contentOpacity: 1,
@@ -144,6 +179,7 @@ export default {
 
   mounted() {
     this.isDocumentVisible = this.getIsDocumentVisible()
+    this.applyColourPalette(this.buildFallbackColourPalette())
 
     window.addEventListener('keydown', this.handleGlobalKeyDown)
     window.addEventListener('focus', this.handleWindowFocus)
@@ -343,16 +379,26 @@ export default {
         return
       }
 
+      const isTrackChange = data.item.id !== this.playerData.trackId
+      const shouldSettleFreshTrack = this.shouldSettleFreshTrack(
+        data,
+        isTrackChange
+      )
       const snapshotMs = this.getAdjustedSnapshotProgressMs(
         data,
         requestStartedAt,
-        responseReceivedAt
+        responseReceivedAt,
+        shouldSettleFreshTrack
       )
 
       this.progressSnapshotMs = snapshotMs
       this.progressSnapshotAt = responseReceivedAt
 
-      if (data.item.id !== this.playerData.trackId) {
+      if (isTrackChange) {
+        if (shouldSettleFreshTrack) {
+          this.pendingImmediatePoll = true
+        }
+
         this.applyTrackChange(data, snapshotMs)
         return
       }
@@ -370,11 +416,12 @@ export default {
     getAdjustedSnapshotProgressMs(
       data = {},
       requestStartedAt = 0,
-      responseReceivedAt = this.getClockNow()
+      responseReceivedAt = this.getClockNow(),
+      settleTrackChange = false
     ) {
       const baseProgressMs = Math.max(0, Number(data.progress_ms || 0))
 
-      if (!data.is_playing) {
+      if (!data.is_playing || settleTrackChange) {
         return baseProgressMs
       }
 
@@ -382,9 +429,16 @@ export default {
       return baseProgressMs + roundTripMs / 2
     },
 
+    shouldSettleFreshTrack(data = {}, isTrackChange = false) {
+      if (!isTrackChange) return false
+
+      return Number(data.progress_ms || 0) <= TRACK_CHANGE_SETTLE_PROGRESS_MS
+    },
+
     applyTrackChange(data = {}, snapshotMs = 0) {
       const item = data.item || {}
       const trackId = item.id || ''
+      const shouldRestoreLyrics = this.preferredDisplayMode === 'lyrics'
       const images = item.album?.images || []
       const best =
         images.find(i => i.width && i.width <= 300) ||
@@ -396,6 +450,7 @@ export default {
       const sep = rawUrl.includes('?') ? '&' : '?'
       const coverUrl = rawUrl ? `${rawUrl}${sep}t=${trackId}` : ''
 
+      this.clearTransitionTimeouts()
       this.coverReady = false
       this.playerData = {
         playing: Boolean(data.is_playing),
@@ -418,11 +473,11 @@ export default {
       )
       this.lastRenderedProgressRatio = -1
       this.lastRenderedProgressSecond = -1
-      this.lyricsMode = false
-      this.displayMode = 'meta'
-      this.contentOpacity = 1
+      this.lyricsMode = shouldRestoreLyrics
+      this.displayMode = shouldRestoreLyrics ? 'blank' : 'meta'
+      this.contentOpacity = shouldRestoreLyrics ? 0 : 1
       this.currentLyricsIndex = -1
-      this.lyricsState = 'idle'
+      this.lyricsState = shouldRestoreLyrics ? 'loading' : 'idle'
       this.lyricsErrorMessage = 'Lyrics not found'
       this.parsedLyrics = []
       this.resetLyricsPosition(true)
@@ -431,6 +486,20 @@ export default {
         this.measureProgressTrack()
         this.syncPlaybackUi(true)
         this.syncPlaybackLoopState()
+
+        if (!shouldRestoreLyrics) {
+          return
+        }
+
+        this.fetchTrackLyrics().finally(() => {
+          if (this.playerData.trackId !== trackId) return
+          if (this.preferredDisplayMode !== 'lyrics') return
+
+          this.currentLyricsIndex = -1
+          this.fadeInMode('lyrics', () => {
+            this.syncPlaybackUi(true)
+          })
+        })
       })
     },
 
@@ -476,7 +545,8 @@ export default {
     },
 
     toggleLyricsMode() {
-      const nextMode = !this.lyricsMode
+      const nextMode = this.preferredDisplayMode !== 'lyrics'
+      this.preferredDisplayMode = nextMode ? 'lyrics' : 'meta'
       this.lyricsMode = nextMode
 
       if (nextMode) {
@@ -981,11 +1051,14 @@ export default {
 
           this.handleAlbumPalette(palette)
         })
-        .catch(() => {})
+        .catch(() => {
+          this.applyColourPalette(this.buildFallbackColourPalette())
+        })
     },
 
     onCoverError() {
       this.coverReady = true
+      this.applyColourPalette(this.buildFallbackColourPalette())
     },
 
     getEmptyPlayer() {
@@ -1035,36 +1108,395 @@ export default {
     },
 
     setAppColours() {
+      if (typeof document === 'undefined' || !this.colourPalette) {
+        return
+      }
+
+      document.documentElement.style.setProperty(
+        '--colour-background-now-playing-base',
+        this.colourPalette.base
+      )
+      document.documentElement.style.setProperty(
+        '--colour-background-now-playing-solid',
+        this.colourPalette.solid
+      )
+      document.documentElement.style.setProperty(
+        '--colour-background-now-playing-top',
+        this.colourPalette.top
+      )
+      document.documentElement.style.setProperty(
+        '--colour-background-now-playing-upper',
+        this.colourPalette.upper
+      )
+      document.documentElement.style.setProperty(
+        '--colour-background-now-playing-lower',
+        this.colourPalette.lower
+      )
+      document.documentElement.style.setProperty(
+        '--colour-background-now-playing-bottom',
+        this.colourPalette.bottom
+      )
       document.documentElement.style.setProperty(
         '--colour-background-now-playing',
-        this.colourPalette.background
+        this.colourPalette.gradient
       )
     },
 
     handleAlbumPalette(palette) {
-      const preferred =
-        palette.Vibrant ||
-        palette.DarkVibrant ||
-        palette.Muted ||
-        palette.DarkMuted ||
-        Object.values(palette).find(s => s)
+      const baseCandidate = this.selectBasePaletteCandidate(palette)
+      const nextPalette = baseCandidate
+        ? this.buildGradientPalette(baseCandidate.hsl, {
+            source: baseCandidate.name
+          })
+        : this.buildFallbackColourPalette()
 
-      if (!preferred) return
+      this.applyColourPalette(nextPalette)
+    },
 
-      this.colourPalette = {
-        text: preferred.getTitleTextColor(),
-        background: preferred.getHex()
-      }
+    applyColourPalette(palette) {
+      if (!palette) return
+
+      this.colourPalette = palette
 
       this.$nextTick(() => {
         this.setAppColours()
       })
     },
 
+    buildFallbackColourPalette() {
+      return this.buildGradientPalette(BACKGROUND_FALLBACK_HSL, {
+        source: 'fallback'
+      })
+    },
+
+    selectBasePaletteCandidate(palette = {}) {
+      const entries = Object.entries(palette).filter(([, swatch]) => swatch)
+
+      if (!entries.length) {
+        this.swatches = []
+        return null
+      }
+
+      const maxPopulation = Math.max(
+        ...entries.map(([, swatch]) => this.getSwatchPopulation(swatch)),
+        1
+      )
+      const candidates = entries
+        .map(([name, swatch]) =>
+          this.normalizePaletteCandidate(name, swatch, maxPopulation)
+        )
+        .sort((left, right) => right.score - left.score)
+
+      this.swatches = candidates.map(candidate => ({
+        name: candidate.name,
+        population: candidate.population,
+        populationRatio: candidate.populationRatio,
+        score: Number(candidate.score.toFixed(3)),
+        rejected: candidate.rejectionReasons
+      }))
+
+      const selectedCandidate = candidates.find(
+        candidate => !candidate.rejectionReasons.length
+      )
+
+      if (
+        this.shouldPreferFallbackOverSelectedCandidate(
+          selectedCandidate,
+          candidates
+        )
+      ) {
+        return null
+      }
+
+      return selectedCandidate
+    },
+
+    normalizePaletteCandidate(name, swatch, maxPopulation = 1) {
+      const rgb = this.normalizeRgb(
+        typeof swatch?.getRgb === 'function' ? swatch.getRgb() : swatch?._rgb
+      )
+      const rawHsl = this.rgbToHsl(rgb)
+      const population = this.getSwatchPopulation(swatch)
+      const populationRatio = Math.min(
+        1,
+        population / Math.max(1, Number(maxPopulation) || 1)
+      )
+      const luminance = this.getRelativeLuminance(rgb)
+      const candidate = {
+        hsl: this.getNormalizedBaseHsl(rawHsl),
+        luminance,
+        name,
+        population,
+        populationRatio,
+        rawHsl,
+        rgb
+      }
+
+      candidate.rejectionReasons = this.getPaletteCandidateRejectionReasons(
+        candidate
+      )
+      candidate.score = this.getPaletteCandidateScore(candidate)
+
+      return candidate
+    },
+
+    getPaletteCandidateRejectionReasons(candidate) {
+      const reasons = []
+      const { luminance, name, populationRatio, rawHsl } = candidate
+      const isMutedCandidate = name.toLowerCase().includes('muted')
+      const looksLikeAccent =
+        populationRatio < PALETTE_REJECTION_THRESHOLDS.accentPopulationRatio &&
+        rawHsl.s > PALETTE_REJECTION_THRESHOLDS.accentSaturation &&
+        !isMutedCandidate
+
+      if (
+        rawHsl.l > PALETTE_REJECTION_THRESHOLDS.maxLightness ||
+        luminance > PALETTE_REJECTION_THRESHOLDS.maxLuminance
+      ) {
+        reasons.push('too-light')
+      }
+
+      if (rawHsl.l < PALETTE_REJECTION_THRESHOLDS.minLightness) {
+        reasons.push('too-dark')
+      }
+
+      if (rawHsl.s < PALETTE_REJECTION_THRESHOLDS.minSaturation) {
+        reasons.push('too-gray')
+      }
+
+      if (looksLikeAccent) {
+        reasons.push('tiny-accent')
+      }
+
+      return reasons
+    },
+
+    getPaletteCandidateScore(candidate) {
+      const { name, populationRatio, rawHsl, rejectionReasons } = candidate
+      const saturationFit = 1 - Math.min(1, Math.abs(rawHsl.s - 0.38) / 0.38)
+      const lightnessFit = 1 - Math.min(1, Math.abs(rawHsl.l - 0.3) / 0.3)
+      const labelWeight = PALETTE_NAME_WEIGHTS[name] || 0
+      const accentPenalty =
+        populationRatio < 0.24 && rawHsl.s > 0.58 && !name.includes('Muted')
+          ? 0.35
+          : 0
+      const rejectionPenalty = rejectionReasons.length * 1.25
+
+      return (
+        populationRatio * 1.55 +
+        saturationFit * 0.95 +
+        lightnessFit * 0.85 +
+        labelWeight -
+        accentPenalty -
+        rejectionPenalty
+      )
+    },
+
+    shouldPreferFallbackOverSelectedCandidate(selectedCandidate, candidates) {
+      if (!selectedCandidate) {
+        return true
+      }
+
+      const selectedName = selectedCandidate.name.toLowerCase()
+      const selectedLooksLikeAccent =
+        !selectedName.includes('muted') &&
+        selectedCandidate.populationRatio < 0.33 &&
+        selectedCandidate.rawHsl.s > 0.45
+      const rejectedMutedDominant = candidates.some(candidate => {
+        const candidateName = candidate.name.toLowerCase()
+        return (
+          candidateName.includes('muted') &&
+          candidate.populationRatio > 0.6 &&
+          candidate.rejectionReasons.length > 0 &&
+          candidate.rejectionReasons.every(reason => reason === 'too-gray')
+        )
+      })
+
+      return selectedLooksLikeAccent && rejectedMutedDominant
+    },
+
+    getSwatchPopulation(swatch) {
+      const population =
+        typeof swatch?.getPopulation === 'function'
+          ? swatch.getPopulation()
+          : swatch?.population
+
+      return Math.max(1, Number(population) || 1)
+    },
+
+    buildGradientPalette(hsl, meta = {}) {
+      const base = this.getNormalizedBaseHsl(hsl)
+      const topHsl = {
+        h: base.h,
+        s: this.clamp(base.s + 0.04, 0.18, 0.72),
+        l: this.clamp(base.l + 0.09, 0.18, 0.54)
+      }
+      const upperHsl = {
+        h: base.h,
+        s: this.clamp(base.s + 0.02, 0.18, 0.7),
+        l: this.clamp(base.l + 0.015, 0.16, 0.46)
+      }
+      const lowerHsl = {
+        h: base.h,
+        s: this.clamp(base.s - 0.01, 0.16, 0.66),
+        l: this.clamp(base.l - 0.04, 0.12, 0.4)
+      }
+      const bottomHsl = {
+        h: base.h,
+        s: this.clamp(base.s - 0.03, 0.14, 0.64),
+        l: this.clamp(base.l - 0.19, 0.06, 0.28)
+      }
+      const top = this.hslToCss(topHsl)
+      const upper = this.hslToCss(upperHsl)
+      const lower = this.hslToCss(lowerHsl)
+      const bottom = this.hslToCss(bottomHsl)
+
+      return {
+        ...meta,
+        base: this.hslToCss(base),
+        solid: lower,
+        top,
+        upper,
+        lower,
+        bottom,
+        gradient: `linear-gradient(180deg, ${top} 0%, ${upper} ${PI_GRADIENT_STOPS.upper}%, ${lower} ${PI_GRADIENT_STOPS.lower}%, ${bottom} 100%)`
+      }
+    },
+
+    getNormalizedBaseHsl(hsl = {}) {
+      const sourceHsl = {
+        h: Number(hsl.h) || 0,
+        s: Number(hsl.s) || 0,
+        l: Number(hsl.l) || 0
+      }
+
+      return {
+        h: ((sourceHsl.h % 360) + 360) % 360,
+        s: this.clamp(
+          sourceHsl.s < BASE_SATURATION_RANGE.min
+            ? sourceHsl.s + 0.06
+            : sourceHsl.s > BASE_SATURATION_RANGE.max
+            ? sourceHsl.s - 0.08
+            : sourceHsl.s,
+          BASE_SATURATION_RANGE.min,
+          BASE_SATURATION_RANGE.max
+        ),
+        l: this.clamp(
+          sourceHsl.l,
+          BASE_LIGHTNESS_RANGE.min,
+          BASE_LIGHTNESS_RANGE.max
+        )
+      }
+    },
+
+    normalizeRgb(rgb = []) {
+      return [0, 1, 2].map(index =>
+        this.clamp(Math.round(Number(rgb[index] || 0)), 0, 255)
+      )
+    },
+
+    rgbToHsl(rgb = []) {
+      const [r, g, b] = this.normalizeRgb(rgb).map(channel => channel / 255)
+      const max = Math.max(r, g, b)
+      const min = Math.min(r, g, b)
+      const lightness = (max + min) / 2
+
+      if (max === min) {
+        return {
+          h: 0,
+          s: 0,
+          l: lightness
+        }
+      }
+
+      const delta = max - min
+      const saturation =
+        lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min)
+      let hue = 0
+
+      switch (max) {
+        case r:
+          hue = (g - b) / delta + (g < b ? 6 : 0)
+          break
+        case g:
+          hue = (b - r) / delta + 2
+          break
+        default:
+          hue = (r - g) / delta + 4
+      }
+
+      return {
+        h: hue * 60,
+        s: saturation,
+        l: lightness
+      }
+    },
+
+    hslToRgb(hsl = {}) {
+      const hue = ((((Number(hsl.h) || 0) % 360) + 360) % 360) / 360
+      const saturation = this.clamp(Number(hsl.s) || 0, 0, 1)
+      const lightness = this.clamp(Number(hsl.l) || 0, 0, 1)
+
+      if (saturation === 0) {
+        const value = Math.round(lightness * 255)
+        return [value, value, value]
+      }
+
+      const q =
+        lightness < 0.5
+          ? lightness * (1 + saturation)
+          : lightness + saturation - lightness * saturation
+      const p = 2 * lightness - q
+      const channels = [hue + 1 / 3, hue, hue - 1 / 3].map(channel =>
+        this.hueToRgbChannel(p, q, channel)
+      )
+
+      return channels.map(channel => Math.round(channel * 255))
+    },
+
+    hueToRgbChannel(p, q, t) {
+      let channel = t
+
+      if (channel < 0) channel += 1
+      if (channel > 1) channel -= 1
+      if (channel < 1 / 6) return p + (q - p) * 6 * channel
+      if (channel < 1 / 2) return q
+      if (channel < 2 / 3) return p + (q - p) * (2 / 3 - channel) * 6
+      return p
+    },
+
+    hslToCss(hsl = {}) {
+      return this.rgbToCss(this.hslToRgb(hsl))
+    },
+
+    rgbToCss(rgb = []) {
+      const [red, green, blue] = this.normalizeRgb(rgb)
+      return `rgb(${red}, ${green}, ${blue})`
+    },
+
+    getRelativeLuminance(rgb = []) {
+      const [red, green, blue] = this.normalizeRgb(rgb).map(channel => {
+        const normalized = channel / 255
+
+        if (normalized <= 0.03928) {
+          return normalized / 12.92
+        }
+
+        return ((normalized + 0.055) / 1.055) ** 2.4
+      })
+
+      return red * 0.2126 + green * 0.7152 + blue * 0.0722
+    },
+
+    clamp(value, min, max) {
+      return Math.min(max, Math.max(min, Number(value) || 0))
+    },
+
     handleExpiredToken() {
       clearTimeout(this.pollPlaying)
       this.pollPlaying = 0
       this.pendingImmediatePoll = false
+      this.applyColourPalette(this.buildFallbackColourPalette())
       this.stopPlaybackLoop()
       this.$emit('requestRefreshToken')
     }
@@ -1075,6 +1507,7 @@ export default {
       if (newStatus === false) {
         clearTimeout(this.pollPlaying)
         this.pollPlaying = 0
+        this.applyColourPalette(this.buildFallbackColourPalette())
         this.stopPlaybackLoop()
         return
       }

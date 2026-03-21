@@ -5,6 +5,11 @@
  *
  */
 .now-playing {
+  --now-playing-content-height: clamp(220px, 30vh, 340px);
+  --now-playing-details-width: 100%;
+  --now-playing-progress-gap: 1.2rem;
+
+  isolation: isolate;
   color: var(--color-text-primary);
 
   &__track,
@@ -15,13 +20,19 @@
     color: var(--color-text-primary);
   }
 
-  background-color: #060606;
+  background-color: var(--colour-background-now-playing-solid);
 
   display: flex;
   flex-flow: column nowrap;
   height: 100%;
   padding: var(--spacing-l);
+  position: relative;
   width: 100%;
+
+  > * {
+    position: relative;
+    z-index: 1;
+  }
 
   &__cover,
   &__details {
@@ -47,41 +58,74 @@
   }
 
   &__details {
-    position: relative;
-    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: var(--now-playing-progress-gap);
+    min-width: 0;
     margin-left: -2cm;
-    min-height: clamp(320px, 58vh, 520px);
+    text-align: center;
   }
 
   &__content {
+    display: flex;
+    flex: 0 0 var(--now-playing-content-height);
+    height: var(--now-playing-content-height);
+    min-height: var(--now-playing-content-height);
+    min-width: 0;
+    width: var(--now-playing-details-width);
     transition: opacity 0.3s ease;
     will-change: opacity;
   }
 
   &__meta,
   &__lyrics {
-    min-height: clamp(300px, 54vh, 500px);
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 100%;
+    width: 100%;
+  }
+
+  &__meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    justify-content: center;
+    overflow: hidden;
   }
 
   &__track {
+    display: -webkit-box;
     font-size: clamp(2.7rem, 4.8vw, 6.2rem);
     font-weight: var(--font-weight-heading);
     margin: 0;
+    max-width: 100%;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
   }
 
   &__artists {
+    display: -webkit-box;
     font-size: clamp(1.43rem, 2.4vw, 2.95rem);
     margin: 3px 0 0;
+    max-width: 100%;
     opacity: 0.8;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   &__lyrics {
+    display: flex;
+    min-height: 0;
     position: relative;
   }
 
   &__progress {
-    margin-top: 1.2rem;
-    width: 100%;
+    margin-top: 0;
+    width: var(--now-playing-details-width);
   }
 
   &__progress-track {
@@ -129,16 +173,22 @@
   }
 
   &__lyrics-empty {
-    padding-top: 1.2rem;
+    align-items: center;
+    display: flex;
+    height: 100%;
     opacity: 0.8;
+    padding-top: 0;
+    width: 100%;
   }
 
   &__lyrics-scroller {
     contain: layout paint;
-    height: clamp(300px, 54vh, 500px);
+    height: 100%;
+    min-height: 0;
     overflow: hidden;
     position: relative;
     scrollbar-width: none;
+    width: 100%;
     -ms-overflow-style: none;
     -webkit-mask-image: linear-gradient(
       to bottom,
@@ -207,9 +257,21 @@
   }
 
   &--active {
-    background: var(--colour-background-now-playing);
+    background-color: var(--colour-background-now-playing-solid);
     align-items: center;
     justify-content: center;
+
+    &::before {
+      background: var(--colour-background-now-playing);
+      content: '';
+      inset: calc(-1 * var(--pi-screen-overscan-top))
+        calc(-1 * var(--pi-screen-overscan-x))
+        calc(-1 * var(--pi-screen-overscan-bottom))
+        calc(-1 * var(--pi-screen-overscan-x));
+      pointer-events: none;
+      position: absolute;
+      z-index: 0;
+    }
   }
 
   &--idle {
@@ -219,7 +281,10 @@
     justify-content: center;
   }
 
-  @media only screen and (min-width: 767px) {
+  @media only screen and (min-width: 767px), only screen and (orientation: portrait) {
+    --now-playing-content-height: clamp(320px, 46vh, 500px);
+    --now-playing-details-width: 145%;
+
     flex-flow: row nowrap;
     padding: 10%;
 
@@ -234,23 +299,13 @@
 
     &__details {
       max-width: 840px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
+      justify-content: flex-start;
       text-align: left;
       padding-left: calc(var(--spacing-m) + 1rem);
     }
 
-    &__meta,
-    &__lyrics {
-      max-width: none;
-      width: 145%;
-    }
-
     &__meta {
-      min-height: 420px;
-      padding-top: 1cm;
-      padding-bottom: 5.5cm;
+      justify-content: flex-start;
     }
 
     &__track,
@@ -261,12 +316,7 @@
     }
 
     &__progress {
-      bottom: 0.75cm;
-      left: 0.25cm;
-      margin-top: 0;
       max-width: none;
-      position: absolute;
-      width: 145%;
     }
   }
 
